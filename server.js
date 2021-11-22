@@ -17,16 +17,22 @@ let stop, targetedField, tempLog, elem, allLogs, totalDeletedDocuments = 0,
     fieldNames, collections;
 
 
-async function deleteOneMonthOldRecords(maxDeleteAtOnce) {
+async function deleteOneMonthOldRecords(maxDeleteAtOnce, intervalTime) {
 
     try {
 
-
         console.log('Process start');
 
-        await mongoose.connect('mongodb://localhost:27017/transaction', dbConnection);
-
-
+        console.log(
+            `Mongo string`,
+            `mongodb://${process.env.ANALYTICS_MONGO_URI}?authSource=admin`,
+            process.env.AUTH_SOURCE
+        );
+        
+        await mongoose.connect(
+            `mongodb://${process.env.ANALYTICS_MONGO_URI}`,
+            dbConnection
+        );
 
         collections = await (
             await mongoose.connection.db.listCollections().toArray()
@@ -35,225 +41,115 @@ async function deleteOneMonthOldRecords(maxDeleteAtOnce) {
         console.log(collections);
         console.log(`Total Collections are ${collections.length}`);
 
-
-
-        fieldNames = ['bucket_start_date', 'bucket_end_date'];
+        fieldNames = ["createdAt", "updatedAt", "userLogInTime"];
 
         const promiseCollections = await Promise.all(collections);
-
-
-
-
-
+        console.log(promiseCollections)
+        const totalCollections = promiseCollections.length;
 
         const colData = async () => {
             const timeout = ms => new Promise(res => setTimeout(res, ms));
 
             (async () => {
+
                 var i = 0;
+
                 while (true) {
-                    await timeout(1000);
-                    console.log(promiseCollections[i++]);
+
+                    await timeout(intervalTime*1000);
+
+                    let collectionName = promiseCollections[i++]
+
+                    let model = mongoose.model(collectionName, new mongoose.Schema({}, {
+                        strict: false
+                    }));
+
+                    try {
+                        tempLog = await model.findOne().lean();
+                        for (elem of fieldNames) {
+                            if (elem in tempLog) {
+                                targetedField = elem;
+                            }
+                        }
+
+                    } catch (err) {
+                        console.log(`No Documents have been found in ${collectionName}`);
+                    }
+
+                    try {
+                        allLogs = await model.find({
+
+                            [targetedField]: {
+                                $lte: moment().subtract(1, 'month').toDate()
+                            }
+
+                        }).lean().select({
+                            _id: 1
+                        });
+                    } catch (err) {
+                        console.log(`Cannot able to find data ${err}`);
+                    }
+
+                    let allLogsLen;
+
+                    if (tempLog) {
+
+                        allLogsLen = allLogs.length;
+                        console.log(`Total Documents in ${collectionName} collection ${allLogsLen}`);
+                    }
+
+                    if (tempLog) {
+                        
+                        if (allLogsLen > maxDeleteAtOnce) {
+                            let start = 0, end = maxDeleteAtOnce, targetedIds = []
+                
+                            allLogs.forEach(element => {
+                                targetedIds.push(element._id)
+                            });
+                            
+                            let deletedCount = 0;
+
+                            while(allLogsLen >= 0) {
+                                await timeout(intervalTime*1000);
+                                console.log(end)
+                                let deletingCall = await model.deleteMany({
+                                    _id: { $in: targetedIds.slice(start, end) }
+                                })
+                
+                                start += maxDeleteAtOnce;
+                
+                                (allLogsLen > maxDeleteAtOnce) ? end += maxDeleteAtOnce : end += allLogsLen;
+                
+                                allLogsLen -= maxDeleteAtOnce;
+
+                                deletedCount += deletingCall.deletedCount;
+                            }
+
+                            console.log(`total records deleted from ${collectionName} are : ${deletedCount}`);
+                            console.log(`deletion process for ${collectionName} is done.`);
+
+                        } else {
+                            await timeout(intervalTime*1000);
+                            let deletingCall = await model.deleteMany({
+                                [targetedField]: {
+                                    $lte: moment().subtract(1, 'month').toDate()
+                                },
+                            })
+                            console.log(`total records deleted from ${collectionName} are : ${deletingCall.deletedCount}`);
+                            console.log(`deletion process for ${collectionName} is done.`)
+                            
+                        }
+                    }
+                    // temination logic
                     if (i >= totalCollections) {
                         break;
                     }
+
                 }
-                console.log("done");
+                console.log("Process finished ");
             })();
-
-        //     for (let collectionName of promiseCollections) {
-
-        //         let model = mongoose.model(collectionName, new mongoose.Schema({}, {
-        //             strict: false
-        //         }));
-
-        //         try {
-        //             tempLog = await model.findOne().lean();
-
-
-        //             for (elem of fieldNames) {
-        //                 if (elem in tempLog) {
-        //                     targetedField = elem;
-        //                 }
-        //             }
-
-        //         } catch (err) {
-
-        //             console.log(`No Documents have been found in ${collectionName}`);
-        //         }
-
-
-
-
-        //         try {
-        //             allLogs = await model.find({
-
-        //                 [targetedField]: {
-        //                     $lte: moment().subtract(1, 'month').toDate()
-        //                 }
-
-        //             }).lean().select({
-        //                 _id: 1
-        //             });
-        //         } catch (err) {
-        //             console.log(`Cannot able to find data ${err}`);
-        //         }
-
-
-
-        //         let allLogsLen;
-
-        //         if (tempLog) {
-
-        //             allLogsLen = allLogs.length;
-        //             console.log(`Total Documents in ${collectionName} collection ${allLogsLen}`);
-        //         }
-
-        //         if (tempLog) {
-
-        //             if (allLogsLen > maxDeleteAtOnce) {
-        //                 let start = 0,
-        //                     end = maxDeleteAtOnce
-
-        //                 let ids = allLogs.map((elem) => elem._id);
-
-
-        //                 const documentsDeletion = async () => {
-
-
-
-
-        //                     try {
-        //                         const deleteDocuments = await model.deleteMany({
-        //                             _id: {
-        //                                 $in: ids.slice(start, end)
-        //                             }
-        //                         })
-
-
-
-        //                         if (deleteDocuments.deletedCount !== maxDeleteAtOnce) {
-
-
-                                 
-        //                             totalDeletedDocuments = totalDeletedDocuments + deleteDocuments.deletedCount;
-                              
-        //                             if(totalDeletedDocuments){
-        //                                 console.log(`Total Documents have been deleted in ${collectionName} collection ${totalDeletedDocuments}`);
-                                        
-                                      
-
-        //                                 const stopInterval = () =>
-        //                                 {
-        //                                     clearInterval(stop);
-        //                                     console.log('Interval stops...');
-        //                                 }
-        //                                 stopInterval();
-                                      
-        //                             }
-                                   
-                                  
-
-
-        //                         } else {
-
-                                    
-        //                             totalDeletedDocuments = totalDeletedDocuments + deleteDocuments.deletedCount;
-
-        //                             start += maxDeleteAtOnce;
-        //                             end += maxDeleteAtOnce;
-
-
-
-
-
-        //                         }
-
-        //                     } catch (err) {
-        //                         console.log(`Cannot able to delete the data ${err}`);
-        //                     }
-
-        //                 }
-
-
-        //                 stop = setInterval(documentsDeletion, 800);
-
-
-
-
-        //             } else {
-        //                 let start = 0,
-        //                     end = 30;
-
-        //                 let ids = allLogs.map((elem) => elem._id);
-        //                 let totalDeletedDocuments = 0;
-
-        //                 const documentsDeletion2 = async () => {
-
-
-        //                     try {
-        //                         const deleteDocuments = await model.deleteMany({
-        //                             _id: {
-        //                                 $in: ids.slice(start, end)
-        //                             }
-        //                         })
-
-        //                         if (deleteDocuments.deletedCount !== 30) {
-
-
-        //                             totalDeletedDocuments = totalDeletedDocuments + deleteDocuments.deletedCount;
-                                  
-        //                             if(totalDeletedDocuments){
-        //                                 console.log(`Total Documents have been deleted in ${collectionName} collection ${totalDeletedDocuments}`);
-                                        
-                                      
-
-        //                                 const stopInterval = () =>
-        //                                 {
-        //                                     clearInterval(stop);
-        //                                     console.log('Interval stops...');
-        //                                 }
-        //                                 stopInterval();
-                                      
-        //                             }
-
-
-
-        //                         } else {
-
-
-        //                             console.log('deletingggg wait.......');
-
-        //                             totalDeletedDocuments = totalDeletedDocuments + deleteDocuments.deletedCount;
-
-        //                             start += 30;
-        //                             end += 30;
-
-
-
-
-
-        //                         }
-        //                     } catch (err) {
-        //                         console.log(`Cannot able to delete the data ${err}`);
-        //                     }
-
-
-
-        //                 }
-
-        //                 stop = setInterval(documentsDeletion2, 800);
-
-        //             }
-
-        //         }
-
-
-        //     };
         }
         colData();
-
-
     } catch (err) {
         console.log(err);
     }
@@ -262,7 +158,11 @@ async function deleteOneMonthOldRecords(maxDeleteAtOnce) {
 
 
 
-deleteOneMonthOldRecords(100);
+
+
+
+// deleteOneMonthRecords(maxDeleteAtOnce, intervalTime in seconds);
+deleteOneMonthOldRecords(100, 4);
 
 
 
